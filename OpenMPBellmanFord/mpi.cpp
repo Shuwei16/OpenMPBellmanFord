@@ -1,3 +1,5 @@
+//mpiexec -n <number of processes> ./mpi_bellman_ford
+
 #include <cassert>
 #include <iostream>
 #include <fstream>
@@ -13,10 +15,6 @@ using std::cin;
 
 #define INF 1000000
 
-/**
- * utils is a namespace for utility functions
- * including I/O (read input file and print results) and matrix dimension convert(2D->1D) function
- */
 namespace utils {
 	int N; //number of vertices
 	int* mat; // the adjacency matrix
@@ -26,7 +24,6 @@ namespace utils {
 		abort();
 	}
 
-	//translate 2-dimension coordinate to 1-dimension
 	int convert_dimension_2D_1D(int x, int y, int n) {
 		return x * n + y;
 	}
@@ -37,7 +34,6 @@ namespace utils {
 			abort_with_error_message("ERROR OCCURRED WHILE READING INPUT FILE");
 		}
 		inputf >> N;
-		//input matrix should be smaller than 20MB * 20MB (400MB, we don't have too much memory for multi-processors)
 		assert(N < (1024 * 1024 * 20));
 		mat = (int*)malloc(N * N * sizeof(int));
 		for (int i = 0; i < N; i++)
@@ -47,7 +43,7 @@ namespace utils {
 		return 0;
 	}
 
-	int print_result(bool has_negative_cycle, int* dist) {
+	int print_result(bool has_negative_cycle, int* dist, int* predecessors, int start_vertex, int destination_vertex) {
 		std::ofstream outputf("output.txt", std::ofstream::out);
 		if (!has_negative_cycle) {
 			for (int i = 0; i < N; i++) {
@@ -56,28 +52,27 @@ namespace utils {
 				outputf << dist[i] << '\n';
 			}
 			outputf.flush();
+			outputf.close();
+
+			// Print the path from start_vertex to destination_vertex
+			std::cout << "Shortest path from vertex " << start_vertex << " to vertex " << destination_vertex << ": ";
+			int vertex = destination_vertex;
+			while (vertex != -1) {
+				std::cout << vertex << " ";
+				vertex = predecessors[vertex];
+			}
+			std::cout << std::endl;
 		}
 		else {
 			outputf << "FOUND NEGATIVE CYCLE!" << endl;
-			cout << "FOUND NEGATIVE CYCLE!" << endl; // Print to screen as well
+			printf("FOUND NEGATIVE CYCLE!");
+			outputf.close();
 		}
-		outputf.close();
 		return 0;
 	}
-}//namespace utils
+}
 
-/**
- * Bellman-Ford algorithm. Find the shortest path from vertex 0 to other vertices.
- * @param rank the rank of the current process
- * @param p number of processes
- * @param n input size
- * @param mat input adjacency matrix
- * @param dist distance array
- * @param has_negative_cycle a bool variable to record if there are negative cycles
- * @param start_vertex the user-selected starting vertex
- * @param end_vertex the user-selected destination vertex
-*/
-void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_negative_cycle, int start_vertex, int end_vertex) {
+void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_negative_cycle, int start_vertex, int destination_vertex, int* predecessors) {
 	int loc_n; // local copy for N
 	int loc_start, loc_end;
 	int* loc_mat; // local matrix
@@ -98,8 +93,8 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 	}
 
 	// Step 3: allocate local memory
-	loc_mat = (int*)malloc(loc_n * loc_n * sizeof(int));
-	loc_dist = (int*)malloc(loc_n * sizeof(int));
+	loc_mat = new int[loc_n * loc_n];
+	loc_dist = new int[loc_n];
 
 	// Step 4: broadcast matrix mat
 	if (my_rank == 0)
@@ -109,6 +104,7 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 	// Step 5: Bellman-Ford algorithm
 	for (int i = 0; i < loc_n; i++) {
 		loc_dist[i] = INF;
+		predecessors[i] = -1; // Initialize predecessors to -1 (indicating no predecessor)
 	}
 	loc_dist[start_vertex] = 0;
 
@@ -126,6 +122,7 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 				if (weight < INF) {
 					if (loc_dist[u] + weight < loc_dist[v]) {
 						loc_dist[v] = loc_dist[u] + weight;
+						predecessors[v] = u; // Update predecessor of v to u
 						loc_has_change = true;
 					}
 				}
@@ -160,59 +157,57 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 		memcpy(dist, loc_dist, loc_n * sizeof(int));
 
 	// Step 7: remember to free memory
-	free(loc_mat);
-	free(loc_dist);
-
-	// Step 8: Show movement steps
-	if (my_rank == 0) {
-		cout << "Shortest path from vertex " << start_vertex << " to vertex " << end_vertex << ": " << loc_dist[end_vertex] << endl;
-	}
+	delete[] loc_mat;
+	delete[] loc_dist;
 }
+
+// ...
 
 int main(int argc, char** argv) {
 	const char* filename = "input.txt";
-	int* dist = 0;
+	bool flag = true;
+	int* dist = new int[utils::N]; // Allocate dist for all processes
 	bool has_negative_cycle = false;
 
 	// MPI initialization
 	MPI_Init(&argc, &argv);
 
-	int size; // number of processors
-	int rank; // my global rank
+	int size; // Number of processors
+	int rank; // My global rank
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 	// Only rank 0 process does the I/O
 	if (rank == 0) {
 		assert(utils::read_file(filename) == 0);
-		dist = (int*)malloc(sizeof(int) * utils::N);
 	}
 
-	// Get user input for start and end vertices
-	int start_vertex, end_vertex;
-	if (rank == 0) {
-		cout << "Enter starting vertex (0-16): ";
-		cin >> start_vertex;
-		cout << "Enter destination vertex (0-16): ";
-		cin >> end_vertex;
-		if (start_vertex < 0 || start_vertex > 16 || end_vertex < 0 || end_vertex > 16) {
-			cout << "Invalid input. Vertices must be between 0 and 16." << endl;
-			MPI_Finalize();
-			return 1;
-		}
-	}
-
-	// Broadcast user input to all processes
-	MPI_Bcast(&start_vertex, 1, MPI_INT, 0, MPI_COMM_WORLD);
-	MPI_Bcast(&end_vertex, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	// Broadcast the graph information to all processes
+	MPI_Bcast(&utils::N, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
 	// Time counter
 	double begin, end;
 	MPI_Barrier(MPI_COMM_WORLD);
 	begin = MPI_Wtime();
 
+	int start_vertex, destination_vertex;
+
+	if (rank == 0) {
+		// Prompt the user for the starting and destination vertices
+		std::cout << "Enter the starting vertex (0-16): ";
+		std::cin >> start_vertex;
+		std::cout << "Enter the destination vertex (0-16): ";
+		std::cin >> destination_vertex;
+	}
+
+	// Broadcast the user-entered vertices to all processes
+	MPI_Bcast(&start_vertex, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&destination_vertex, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+	int* predecessors = new int[utils::N]; // Array to store predecessors
+
 	// Bellman-Ford algorithm
-	bellman_ford(rank, size, utils::N, utils::mat, dist, &has_negative_cycle, start_vertex, end_vertex);
+	bellman_ford(rank, size, utils::N, utils::mat, dist, &has_negative_cycle, start_vertex, destination_vertex, predecessors);
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	// End timer
@@ -221,10 +216,12 @@ int main(int argc, char** argv) {
 	if (rank == 0) {
 		std::cerr.setf(std::ios::fixed);
 		std::cerr << std::setprecision(6) << "Time(s): " << (end - begin) << endl;
-		utils::print_result(has_negative_cycle, dist);
-		free(dist);
-		free(utils::mat);
+		utils::print_result(has_negative_cycle, dist, predecessors, start_vertex, destination_vertex);
+		delete[] dist;
+		delete[] utils::mat;
+		delete[] predecessors;
 	}
+
 	MPI_Finalize();
 	return 0;
 }
