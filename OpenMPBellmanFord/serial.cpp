@@ -113,7 +113,7 @@ void bellman_ford(int n, int* mat, int* dist, bool* has_negative_cycle) {
 }
 
 int main(int argc, char** argv) {
-	const char* filename = "input1.txt";
+	const char* filename = "input.txt";
 	assert(utils::read_file(filename) == 0);
 
 	int* dist;
