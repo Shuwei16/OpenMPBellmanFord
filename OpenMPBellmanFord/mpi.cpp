@@ -1,19 +1,15 @@
-/*
- * This is a mpi version of bellman_ford algorithm
- * Compile: mpic++ -std=c++11 -o mpi_bellman_ford mpi_bellman_ford.cpp
- * Run: mpiexec -n <number of processes> ./mpi_bellman_ford <input file>, you will find the output file 'output.txt'
- * */
-
 #include <cassert>
 #include <iostream>
 #include <fstream>
 #include <iomanip>
+#include <vector>
 
 #include <mpi.h>
 
 using std::string;
 using std::cout;
 using std::endl;
+using std::cin;
 
 #define INF 1000000
 
@@ -63,36 +59,37 @@ namespace utils {
 		}
 		else {
 			outputf << "FOUND NEGATIVE CYCLE!" << endl;
+			cout << "FOUND NEGATIVE CYCLE!" << endl; // Print to screen as well
 		}
 		outputf.close();
 		return 0;
 	}
 }//namespace utils
 
-
 /**
  * Bellman-Ford algorithm. Find the shortest path from vertex 0 to other vertices.
- * @param rank the rank of current process
- * @param size number of processes
- * @param MPI_COMM_WORLD the MPI communicator
+ * @param rank the rank of the current process
+ * @param p number of processes
  * @param n input size
- * @param *mat input adjacency matrix
- * @param *dist distance array
- * @param *has_negative_cycle a bool variable to recode if there are negative cycles
+ * @param mat input adjacency matrix
+ * @param dist distance array
+ * @param has_negative_cycle a bool variable to record if there are negative cycles
+ * @param start_vertex the user-selected starting vertex
+ * @param end_vertex the user-selected destination vertex
 */
-void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_negative_cycle) {
+void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_negative_cycle, int start_vertex, int end_vertex) {
 	int loc_n; // local copy for N
 	int loc_start, loc_end;
-	int* loc_mat; //local matrix
-	int* loc_dist; //local distance
+	int* loc_mat; // local matrix
+	int* loc_dist; // local distance
 
-	//step 1: broadcast N
+	// Step 1: broadcast N
 	if (my_rank == 0) {
 		loc_n = n;
 	}
 	MPI_Bcast(&loc_n, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-	//step 2: find local task range
+	// Step 2: find local task range
 	int ave = loc_n / p;
 	loc_start = ave * my_rank;
 	loc_end = ave * (my_rank + 1);
@@ -100,21 +97,22 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 		loc_end = loc_n;
 	}
 
-	//step 3: allocate local memory
+	// Step 3: allocate local memory
 	loc_mat = (int*)malloc(loc_n * loc_n * sizeof(int));
 	loc_dist = (int*)malloc(loc_n * sizeof(int));
 
-	//step 4: broadcast matrix mat
+	// Step 4: broadcast matrix mat
 	if (my_rank == 0)
 		memcpy(loc_mat, mat, sizeof(int) * loc_n * loc_n);
 	MPI_Bcast(loc_mat, loc_n * loc_n, MPI_INT, 0, MPI_COMM_WORLD);
 
-	//step 5: bellman-ford algorithm
+	// Step 5: Bellman-Ford algorithm
 	for (int i = 0; i < loc_n; i++) {
 		loc_dist[i] = INF;
 	}
-	loc_dist[0] = 0;
-	//Synchronize all processes and get the begin time
+	loc_dist[start_vertex] = 0;
+
+	// Synchronize all processes and get the begin time
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	bool loc_has_change;
@@ -139,7 +137,7 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 		MPI_Allreduce(MPI_IN_PLACE, loc_dist, loc_n, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
 	}
 
-	//do one more step
+	// Do one more step
 	if (loc_iter_num == loc_n - 1) {
 		loc_has_change = false;
 		for (int u = loc_start; u < loc_end; u++) {
@@ -157,46 +155,67 @@ void bellman_ford(int my_rank, int p, int n, int* mat, int* dist, bool* has_nega
 		MPI_Allreduce(&loc_has_change, has_negative_cycle, 1, MPI_C_BOOL, MPI_LOR, MPI_COMM_WORLD);
 	}
 
-	//step 6: retrieve results back
+	// Step 6: retrieve results back
 	if (my_rank == 0)
 		memcpy(dist, loc_dist, loc_n * sizeof(int));
 
-	//step 7: remember to free memory
+	// Step 7: remember to free memory
 	free(loc_mat);
 	free(loc_dist);
 
+	// Step 8: Show movement steps
+	if (my_rank == 0) {
+		cout << "Shortest path from vertex " << start_vertex << " to vertex " << end_vertex << ": " << loc_dist[end_vertex] << endl;
+	}
 }
 
 int main(int argc, char** argv) {
-	const char* filename = "C:\\Users\\mingf\\Documents\\GitHub\\OpenMPBellmanFord\\OpenMPBellmanFord\\input1.txt";
-	bool flag = true;
+	const char* filename = "input.txt";
 	int* dist = 0;
 	bool has_negative_cycle = false;
 
-	//MPI initialization
+	// MPI initialization
 	MPI_Init(&argc, &argv);
 
-	int size;//number of processors
-	int rank;//my global rank
+	int size; // number of processors
+	int rank; // my global rank
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-	//only rank 0 process do the I/O
+	// Only rank 0 process does the I/O
 	if (rank == 0) {
 		assert(utils::read_file(filename) == 0);
 		dist = (int*)malloc(sizeof(int) * utils::N);
 	}
 
-	//time counter
+	// Get user input for start and end vertices
+	int start_vertex, end_vertex;
+	if (rank == 0) {
+		cout << "Enter starting vertex (0-16): ";
+		cin >> start_vertex;
+		cout << "Enter destination vertex (0-16): ";
+		cin >> end_vertex;
+		if (start_vertex < 0 || start_vertex > 16 || end_vertex < 0 || end_vertex > 16) {
+			cout << "Invalid input. Vertices must be between 0 and 16." << endl;
+			MPI_Finalize();
+			return 1;
+		}
+	}
+
+	// Broadcast user input to all processes
+	MPI_Bcast(&start_vertex, 1, MPI_INT, 0, MPI_COMM_WORLD);
+	MPI_Bcast(&end_vertex, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+	// Time counter
 	double begin, end;
 	MPI_Barrier(MPI_COMM_WORLD);
 	begin = MPI_Wtime();
 
-	//bellman-ford algorithm
-	bellman_ford(rank, size, utils::N, utils::mat, dist, &has_negative_cycle);
+	// Bellman-Ford algorithm
+	bellman_ford(rank, size, utils::N, utils::mat, dist, &has_negative_cycle, start_vertex, end_vertex);
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	//end timer
+	// End timer
 	end = MPI_Wtime();
 
 	if (rank == 0) {
