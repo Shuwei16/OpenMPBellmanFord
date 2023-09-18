@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <cstring>
 #include "mpi.h"
+#include <vector>
 
 using std::string;
 using std::cout;
@@ -18,7 +19,7 @@ struct VertexInfo {
 };
 
 namespace utils {
-	int N; //number of vertices
+	int N; // number of vertices
 	int* mat; // the adjacency matrix
 
 	void abort_with_error_message(string msg) {
@@ -26,7 +27,7 @@ namespace utils {
 		abort();
 	}
 
-	//translate 2-dimension coordinate to 1-dimension
+	// translate 2-dimension coordinate to 1-dimension
 	int convert_dimension_2D_1D(int x, int y, int n) {
 		return x * n + y;
 	}
@@ -37,10 +38,9 @@ namespace utils {
 			abort_with_error_message("ERROR OCCURRED WHILE READING INPUT FILE");
 		}
 		inputf >> N;
-		std::cout << N;
-		//input matrix should be smaller than 20MB * 20MB (400MB, we don't have too much memory for multi-processors)
+		// input matrix should be smaller than 20MB * 20MB (400MB, we don't have too much memory for multi-processors)
 		assert(N < (1024 * 1024 * 20));
-		mat = (int*)malloc(N * N * sizeof(int));
+		mat = new int[N * N];
 		for (int i = 0; i < N; i++)
 			for (int j = 0; j < N; j++) {
 				inputf >> mat[convert_dimension_2D_1D(i, j, N)];
@@ -65,7 +65,87 @@ namespace utils {
 		outputf.close();
 		return 0;
 	}
+
+	int print_result(bool has_negative_cycle, int* dist, int start_point, int end_point, VertexInfo* vertex_info) {
+		std::ofstream outputf("output.txt", std::ofstream::out);
+		std::cout << "hey1\n";
+		if (!has_negative_cycle) {
+			for (int i = 0; i < utils::N; i++) {
+				if (dist[i] > INF)
+					dist[i] = INF;
+				outputf << dist[i] << '\n';
+			}
+			outputf.flush();
+			std::cout << "hey2\n";
+			if (dist[end_point - 1] != INF) {
+				std::cout << "hey3\n";
+				std::vector<int> path;
+				int current_vertex = end_point - 1;
+				int total_weight = 0; // Initialize the total weight to zero
+
+				// Trace back the path from the destination to the start and calculate the total weight
+				while (current_vertex != start_point - 1) {
+					int predecessor = vertex_info[current_vertex].predecessor;
+					int weight = utils::mat[utils::convert_dimension_2D_1D(predecessor, current_vertex, utils::N)];
+					total_weight += weight;
+					path.push_back(current_vertex + 1); // Add vertex to the path (adjust for 1-based indexing)
+					current_vertex = predecessor;
+				}
+				total_weight += dist[end_point - 1]; // Add the weight of the destination vertex
+				path.push_back(start_point);
+
+				std::cout << "Shortest Path from " << start_point << " to " << end_point << ": ";
+				for (int i = path.size() - 1; i >= 0; i--) {
+					std::cout << path[i];
+					if (i != 0) {
+						std::cout << " -> ";
+					}
+				}
+				std::cout << "\nTotal Weight: " << total_weight << std::endl;
+			}
+		}
+		else {
+			outputf << "FOUND NEGATIVE CYCLE!" << endl;
+		}
+
+		outputf.close();
+		return 0;
+	}
+
 }
+
+#include <vector>
+
+// ...
+
+void backtrack_path(int my_rank, int start_point, int end_point, const VertexInfo* vertex_info) {
+	// Only process 0 will perform path reconstruction
+	if (my_rank == 0) {
+		int current_vertex = end_point - 1; // Adjust for 0-based indexing
+		std::vector<int> path;
+
+		// Backtrack from the destination to the start
+		while (current_vertex != -1 && current_vertex != start_point - 1) {
+			path.push_back(current_vertex + 1); // Adjust for 1-based indexing
+			current_vertex = vertex_info[current_vertex].predecessor;
+		}
+
+		// If the start_point and end_point are connected, add the start_point to the path
+		if (current_vertex == start_point - 1) {
+			path.push_back(start_point);
+			std::reverse(path.begin(), path.end()); // Reverse the path to get it from start to end
+			std::cout << "Shortest path from " << start_point << " to " << end_point << ": ";
+			for (int vertex : path) {
+				std::cout << vertex << " -> ";
+			}
+			std::cout << "Destination reached." << std::endl;
+		}
+		else {
+			std::cout << "No path from " << start_point << " to " << end_point << "." << std::endl;
+		}
+	}
+}
+
 
 void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist, bool* has_negative_cycle, int start_point, int end_point, VertexInfo* vertex_info) {
 	int loc_n; // need a local copy for N
@@ -88,8 +168,8 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 	}
 
 	// Step 3: allocate local memory
-	loc_mat = (int*)malloc(loc_n * loc_n * sizeof(int));
-	loc_dist = (int*)malloc(loc_n * sizeof(int));
+	loc_mat = new int[loc_n * loc_n];
+	loc_dist = new int[loc_n];
 
 	if (loc_mat == nullptr || loc_dist == nullptr) {
 		std::cerr << "Memory allocation failed in process " << my_rank << std::endl;
@@ -97,13 +177,13 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 	}
 
 	// Step 4: broadcast matrix mat
-	if (my_rank == 0)
-		memcpy(loc_mat, mat, sizeof(int) * loc_n * loc_n);
-	MPI_Bcast(loc_mat, loc_n * loc_n, MPI_INT, 0, comm);
+	MPI_Scatter(utils::mat, loc_n * loc_n, MPI_INT, loc_mat, loc_n * loc_n, MPI_INT, 0, comm);
+
 
 	// Step 5: Bellman-Ford algorithm
 	for (int i = 0; i < loc_n; i++) {
 		loc_dist[i] = INF;
+		//vertex_info[i].predecessor = -1; // Initialize predecessor to -1
 	}
 	loc_dist[start_point - 1] = 0; // Initialize the distance of the starting point
 	MPI_Barrier(comm);
@@ -121,11 +201,15 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 				if (weight < INF) {
 					if (loc_dist[u] + weight < loc_dist[v]) {
 						loc_dist[v] = loc_dist[u] + weight;
+						//vertex_info[v].predecessor = u; // Store predecessor information
 						loc_has_change = true; // A change occurred in this iteration
 					}
 				}
 			}
 		}
+
+		// Broadcast updated vertex_info to all processes
+		//MPI_Allreduce(MPI_IN_PLACE, vertex_info, loc_n, MPI_INT, MPI_MIN, comm);
 
 		MPI_Allreduce(MPI_IN_PLACE, &loc_has_change, 1, MPI_C_BOOL, MPI_LOR, comm);
 
@@ -135,52 +219,59 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 		}
 
 		MPI_Allreduce(MPI_IN_PLACE, loc_dist, loc_n, MPI_INT, MPI_MIN, comm);
+
+		MPI_Barrier(comm);
+
+		// Check if the destination point has been reached
+		if (loc_dist[end_point - 1] != INF) {
+			loc_has_change = false; // Stop the algorithm
+			break;
+		}
 	}
 
 	// Check if the destination point has been reached
-	if (loc_dist[end_point - 1] == INF) {
-		*has_negative_cycle = true;
+	if (loc_dist[end_point - 1] != INF) {
+		loc_has_change = false; // Stop the algorithm
 	}
 
-	//// Store predecessor vertices and weights in the vertex_info array
-	for (int i = 0; i < loc_n; i++) {
-		vertex_info[i].predecessor = -1; // Initialize to -1 (no predecessor)
-		//	vertex_info[i].weight = loc_dist[i];
-	}
+	// Broadcast the flag indicating whether the destination vertex has been reached or not.
+	MPI_Bcast(&loc_has_change, 1, MPI_C_BOOL, 0, comm);
+	*has_negative_cycle = loc_has_change;
+
+	// Gather results back to root process
+	MPI_Gather(loc_dist, loc_n, MPI_INT, dist, loc_n, MPI_INT, 0, comm);
+
 
 	// Step 6: retrieve results back
 	if (my_rank == 0)
 		memcpy(dist, loc_dist, loc_n * sizeof(int));
 
 	// Step 7: remember to free memory
-	free(loc_mat);
-	free(loc_dist);
+	delete[] loc_mat;
+	delete[] loc_dist;
 }
 
 int main(int argc, char** argv) {
-	//if (argc <= 1) {
-	//	utils::abort_with_error_message("INPUT FILE WAS NOT FOUND!");
-	//}
-	//string filename = argv[1];
 	string filename = "C:\\Users\\mingf\\Documents\\GitHub\\OpenMPBellmanFord\\OpenMPBellmanFord\\input.txt";
 
-	int* dist{};
+	int* dist = nullptr;
 	bool has_negative_cycle = false;
-	int start_point, end_point;
+	int start_point = 1, end_point = 17;
 
-	//MPI initialization
+	// MPI initialization
 	MPI_Init(&argc, &argv);
 	MPI_Comm comm;
 
-	int p;//number of processors
-	int my_rank;//my global rank
+	int p; // number of processors
+	int my_rank; // my global rank
 	comm = MPI_COMM_WORLD;
 	MPI_Comm_size(comm, &p);
 	MPI_Comm_rank(comm, &my_rank);
 
 	if (my_rank == 0) {
+		delete[] dist;
 		assert(utils::read_file(filename) == 0);
-		dist = (int*)malloc(sizeof(int) * utils::N);
+		dist = new int[utils::N];
 
 		system("Color 0A");
 
@@ -210,10 +301,10 @@ int main(int argc, char** argv) {
 		std::cout << "17    Block AB\n";
 		std::cout << "------------------------------\n\n";
 
-		std::cout << "Enter the starting point (1-17): ";
-		std::cin >> start_point;
-		std::cout << "Enter the destination point (1-17): ";
-		std::cin >> end_point;
+		std::cout << "Enter the starting point (1-17): 1\n";
+		//std::cin >> start_point;
+		std::cout << "Enter the destination point (1-17): 17\n";
+		//std::cin >> end_point;
 
 		while (start_point < 1 || start_point > 17 || end_point < 1 || end_point > 17) {
 			std::cout << "Invalid start or end point. Please enter valid points.\n" << std::endl;
@@ -228,37 +319,61 @@ int main(int argc, char** argv) {
 	MPI_Bcast(&start_point, 1, MPI_INT, 0, comm);
 	MPI_Bcast(&end_point, 1, MPI_INT, 0, comm);
 
-
-	//time counter
+	// Time counter
 	double t1, t2;
 	MPI_Barrier(comm);
+
 	t1 = MPI_Wtime();
 
-	//bellman-ford algorithm
+	// Bellman-Ford algorithm
 	VertexInfo* vertex_info = new VertexInfo[utils::N];
 	bellman_ford(my_rank, p, comm, utils::N, utils::mat, dist, &has_negative_cycle, start_point, end_point, vertex_info);
-	MPI_Barrier(comm);
 
-	//end timer
+	// End timer
+	MPI_Barrier(comm);
 	t2 = MPI_Wtime();
 
-	if (my_rank == 0) {
-		std::cerr.setf(std::ios::fixed);
-		std::cerr << std::setprecision(6) << "Time(s): " << (t2 - t1) << endl;
-		utils::print_result(has_negative_cycle, dist);
-		free(dist);
-		free(utils::mat);
+	// Display results
+	//if (my_rank == 0) {
+	//	std::cerr.setf(std::ios::fixed);
+	//	std::cerr << std::setprecision(6) << "Time(s): " << (t2 - t1) << endl;
+	//	if (!has_negative_cycle) {
+	//		backtrack_path(start_point, end_point, vertex_info);
+	//	}
+	//	else {
+	//		std::cout << "Negative cycle detected. No path can be determined." << std::endl;
+	//	}
+	//	delete[] dist;
+	//	delete[] utils::mat;
+	//	delete[] vertex_info;
+	//}
 
-		int current_vertex = end_point - 1;
-		std::cout << "Shortest Path from " << start_point << " to " << end_point << ": ";
-		while (current_vertex != start_point - 1) {
-			std::cout << current_vertex + 1 << " <- ";
-			current_vertex = vertex_info[current_vertex].predecessor;
-		}
-		std::cout << start_point << " ()" << std::endl;
+	//////MPI_Comm singleProcessComm;
+	//////MPI_Group worldGroup, singleProcessGroup;
 
-	}
-	delete[] vertex_info;
+	//////// Create a group with only process 0
+	//////MPI_Comm_group(MPI_COMM_WORLD, &worldGroup);
+	//////int ranks[] = { 0 };
+	//////MPI_Group_incl(worldGroup, 1, ranks, &singleProcessGroup);
+
+	//////// Create a communicator for the single process
+	//////MPI_Comm_create(MPI_COMM_WORLD, singleProcessGroup, &singleProcessComm);
+
+	//////if (my_rank == 0) {
+	//////	std::cerr.setf(std::ios::fixed);
+	//////	std::cerr << std::setprecision(6) << "Time(s): " << (t2 - t1) << endl;
+	//////	if (!has_negative_cycle) {
+	//////		backtrack_path(my_rank, start_point, end_point, vertex_info);
+	//////	}
+	//////	else {
+	//////		std::cout << "Negative cycle detected. No path can be determined." << std::endl;
+	//////	}
+	//////	delete[] dist;
+	//////	delete[] utils::mat;
+	//////	delete[] vertex_info;
+	//////}
+
+	std::cout << "END";
 	MPI_Finalize();
 	return 0;
 }

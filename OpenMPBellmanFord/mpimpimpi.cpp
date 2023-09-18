@@ -11,12 +11,11 @@
 #include <algorithm>
 #include <iomanip>
 #include <cstring>
-#include<vector>
+
 #include "mpi.h"
 
 using std::string;
 using std::cout;
-using std::cin;
 using std::endl;
 
 #define INF 1000000
@@ -25,6 +24,7 @@ using std::endl;
  * utils is a namespace for utility functions
  * including I/O (read input file and print results) and matrix dimension convert(2D->1D) function
  */
+
 namespace utils {
 	int N; //number of vertices
 	int* mat; // the adjacency matrix
@@ -84,7 +84,7 @@ namespace utils {
  * @param *dist distance array
  * @param *has_negative_cycle a bool variable to recode if there are negative cycles
 */
-void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist, bool* has_negative_cycle, int* predecessor) {
+void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist, bool* has_negative_cycle, int start_point, int end_point) {
 	int loc_n; // need a local copy for N
 	int loc_start, loc_end;
 	int* loc_mat; //local matrix
@@ -116,14 +116,15 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 	//step 5: bellman-ford algorithm
 	for (int i = 0; i < loc_n; i++) {
 		loc_dist[i] = INF;
-		predecessor[i] = -1;
 	}
-	loc_dist[0] = 0;
+	//loc_dist[0] = 0;
+	loc_dist[start_point] = 0; // Initialize the start point's distance
+
 	MPI_Barrier(comm);
 
 	bool loc_has_change;
 	int loc_iter_num = 0;
-	for (int iter = 0; iter < loc_n - 1; iter++) {
+	for (int iter = start_point; iter < end_point; iter++) { // Start from start_point and end at end_point
 		loc_has_change = false;
 		loc_iter_num++;
 		for (int u = loc_start; u < loc_end; u++) {
@@ -133,7 +134,6 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 					if (loc_dist[u] + weight < loc_dist[v]) {
 						loc_dist[v] = loc_dist[u] + weight;
 						loc_has_change = true;
-						predecessor[v] = u; // Update predecessor
 					}
 				}
 			}
@@ -154,7 +154,6 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 					if (loc_dist[u] + weight < loc_dist[v]) {
 						loc_dist[v] = loc_dist[u] + weight;
 						loc_has_change = true;
-						predecessor[v] = u; // Update predecessor
 						break;
 					}
 				}
@@ -170,20 +169,20 @@ void bellman_ford(int my_rank, int p, MPI_Comm comm, int n, int* mat, int* dist,
 	//step 7: remember to free memory
 	free(loc_mat);
 	free(loc_dist);
-}
 
+}
 
 int main(int argc, char** argv) {
 	//if (argc <= 1) {
 	//	utils::abort_with_error_message("INPUT FILE WAS NOT FOUND!");
 	//}
 	//string filename = argv[1];
+
 	string filename = "C:\\Users\\mingf\\Documents\\GitHub\\OpenMPBellmanFord\\OpenMPBellmanFord\\input.txt";
 
-	int* dist{}, * predecessor{};
+	int* dist = nullptr;
 	bool has_negative_cycle = false;
-	int start_point = 1, end_point = 7; // Variables for user input.
-
+	int start_point = 1, end_point = 7;
 
 	//MPI initialization
 	MPI_Init(&argc, &argv);
@@ -195,54 +194,52 @@ int main(int argc, char** argv) {
 	MPI_Comm_size(comm, &p);
 	MPI_Comm_rank(comm, &my_rank);
 
-	//only rank 0 process do the I/O and user input
+	//only rank 0 process do the I/O
 	if (my_rank == 0) {
 		assert(utils::read_file(filename) == 0);
 		dist = (int*)malloc(sizeof(int) * utils::N);
-		predecessor = (int*)malloc(sizeof(int) * utils::N);
 
-		cout << "=======================================================\n";
-		cout << "[ Bellman-Ford Algorithm for Campus Navigation System ]\n";
-		cout << "=======================================================\n\n";
-		cout << "Parallel Method Used: MPI\n";
-		cout << "............................\n\n";
-		cout << "No.   Location Name\n";
-		cout << "------------------------------\n";
-		cout << "1     Main Entrance\n";
-		cout << "2     YumYum Cafeteria/Block L\n";
-		cout << "3     The Rimba\n";
-		cout << "4     Block M\n";
-		cout << "5     Bangungan KKB/Block A\n";
-		cout << "6     RedBricks Cafeteria\n";
-		cout << "7     Bangungan TSS\n";
-		cout << "8     CITC\n";
-		cout << "9     Block K\n";
-		cout << "10    Block D\n";
-		cout << "11    Library\n";
-		cout << "12    DTAR\n";
-		cout << "13    Sport Complex\n";
-		cout << "14    Hostel\n";
-		cout << "15    Casuarina Cafe\n";
-		cout << "16    Block DK\n";
-		cout << "17    Block AB\n";
-		cout << "------------------------------\n\n";
+		std::cout << "=======================================================\n";
+		std::cout << "[ Bellman-Ford Algorithm for Campus Navigation System ]\n";
+		std::cout << "=======================================================\n\n";
+		std::cout << "Parallel Method Used: MPI\n";
+		std::cout << "............................\n\n";
+		std::cout << "No.   Location Name\n";
+		std::cout << "------------------------------\n";
+		std::cout << "1     Main Entrance\n";
+		std::cout << "2     YumYum Cafeteria/Block L\n";
+		std::cout << "3     The Rimba\n";
+		std::cout << "4     Block M\n";
+		std::cout << "5     Bangungan KKB/Block A\n";
+		std::cout << "6     RedBricks Cafeteria\n";
+		std::cout << "7     Bangungan TSS\n";
+		std::cout << "8     CITC\n";
+		std::cout << "9     Block K\n";
+		std::cout << "10    Block D\n";
+		std::cout << "11    Library\n";
+		std::cout << "12    DTAR\n";
+		std::cout << "13    Sport Complex\n";
+		std::cout << "14    Hostel\n";
+		std::cout << "15    Casuarina Cafe\n";
+		std::cout << "16    Block DK\n";
+		std::cout << "17    Block AB\n";
+		std::cout << "------------------------------\n\n";
 
-		// User input for starting and destination points.
-		cout << "Enter the starting point (1-17): 1\n";
-		//cin >> start_point;
-		cout << "Enter the destination point (1-17): 7\n";
-		//cin >> end_point;
+		std::cout << "Enter the starting point (1-17): 1\n";
+		//std::cin >> start_point;
+		std::cout << "Enter the destination point (1-17): 7\n";
+		//std::cin >> end_point;
 
 		while (start_point < 1 || start_point > 17 || end_point < 1 || end_point > 17) {
-			cout << "Invalid start or end point. Please enter valid points.\n" << endl;
-			cout << "Enter the starting point (1-17): ";
-			cin >> start_point;
-			cout << "Enter the destination point (1-17): ";
-			cin >> end_point;
+			std::cout << "Invalid start or end point. Please enter valid points.\n" << std::endl;
+			std::cout << "Enter the starting point (1-17): ";
+			std::cin >> start_point;
+			std::cout << "Enter the destination point (1-17): ";
+			std::cin >> end_point;
 		}
 	}
 
-	// Broadcast user input to all processes.
+	// Broadcast the start and end points to all processes
 	MPI_Bcast(&start_point, 1, MPI_INT, 0, comm);
 	MPI_Bcast(&end_point, 1, MPI_INT, 0, comm);
 
@@ -252,7 +249,7 @@ int main(int argc, char** argv) {
 	t1 = MPI_Wtime();
 
 	//bellman-ford algorithm
-	bellman_ford(my_rank, p, comm, utils::N, utils::mat, dist, &has_negative_cycle, predecessor);
+	bellman_ford(my_rank, p, comm, utils::N, utils::mat, dist, &has_negative_cycle, start_point - 1, end_point - 1); // Adjust for 0-based indexing
 	MPI_Barrier(comm);
 
 	//end timer
@@ -262,37 +259,9 @@ int main(int argc, char** argv) {
 		std::cerr.setf(std::ios::fixed);
 		std::cerr << std::setprecision(6) << "Time(s): " << (t2 - t1) << endl;
 		utils::print_result(has_negative_cycle, dist);
-
-		// Output the path if it exists
-		if (!has_negative_cycle && my_rank == 0) {
-			std::vector<int> path;
-			int current_vertex = end_point - 1; // Convert to 0-based index
-			while (current_vertex != -1) {
-				path.push_back(current_vertex);
-				current_vertex = predecessor[current_vertex];
-			}
-
-			if (path.back() == start_point - 1) {
-				std::cout << "Shortest Path from " << start_point << " to " << end_point << ": ";
-				for (int i = path.size() - 1; i >= 0; i--) {
-					std::cout << path[i] + 1 << " "; // Convert back to 1-based index
-				}
-				std::cout << std::endl;
-			}
-			else {
-				std::cout << "No path exists from " << start_point << " to " << end_point << "." << std::endl;
-			}
-		}
-
-		// Free the predecessor array
-		free(predecessor);
 		free(dist);
 		free(utils::mat);
 	}
-
-	std::cout << "Process " << my_rank << " completed." << endl;
 	MPI_Finalize();
 	return 0;
 }
-
-
