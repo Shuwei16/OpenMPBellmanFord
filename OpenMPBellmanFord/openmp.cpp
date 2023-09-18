@@ -270,6 +270,7 @@ int main() {
 		vector<int> path;
 		int pathWeight = 0;
 		find_all_paths(start_point, end_point, path, allPaths, pathWeight);
+
 		// Get the current time
 		time_t currentTime = time(nullptr);
 		struct tm localTime;
