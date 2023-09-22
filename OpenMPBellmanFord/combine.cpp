@@ -1,18 +1,25 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <cassert>
-#include <chrono>
+#include <iostream>
 #include <cstdlib>
 #include <string>
-#include <iostream>
+#include <cassert>
+#include <fstream>
+#include <algorithm>
+#include <iomanip>
+#include <cstring>
+#include "omp.h"
 #include <vector>
 #include <windows.h>
+#include <ctime>
+#include <chrono>
 #include <psapi.h>
 
 using std::string;
 using std::cout;
 using std::cin;
 using std::endl;
+using std::vector;
 
 using namespace std;
 
@@ -165,15 +172,6 @@ int main(int argc, char** argv) {
 	int* dist;
 	bool has_negative_cycle;
 
-	// Get a handle to the current process
-	HANDLE hProcess = GetCurrentProcess();
-	// Initialize the PROCESS_MEMORY_COUNTERS structure
-	PROCESS_MEMORY_COUNTERS pmc;
-	memset(&pmc, 0, sizeof(PROCESS_MEMORY_COUNTERS));
-	// Store memory usage for all processes
-	double serial_memory_usages_before;
-	double serial_memory_usages_after;
-
 	dist = (int*)malloc(sizeof(int) * utils::N);
 	std::vector<int> prev(utils::N); // To store previous nodes in the shortest path
 
@@ -226,10 +224,6 @@ int main(int argc, char** argv) {
 	cout << CYAN;
 	cout << "\n\n\nSerial Processing...\n\n";
 
-	// Measure memory usage before running the serial algorithm
-	GetProcessMemoryInfo(hProcess, &pmc, sizeof(PROCESS_MEMORY_COUNTERS));
-	serial_memory_usages_before = static_cast<double>(pmc.WorkingSetSize)  / (1024 * 1024);
-	
 	// to record the start time
 	auto start_time = chrono::steady_clock::now();
 
@@ -237,9 +231,6 @@ int main(int argc, char** argv) {
 
 	// to record the end time after completing the algo
 	auto end_time = chrono::steady_clock::now();
-	GetProcessMemoryInfo(hProcess, &pmc, sizeof(PROCESS_MEMORY_COUNTERS));
-	serial_memory_usages_after = static_cast<double>(pmc.WorkingSetSize) / (1024 * 1024);
-
 	long long ms_wall = chrono::duration_cast<chrono::microseconds>(end_time - start_time).count();
 
 	utils::print_result(has_negative_cycle, dist);
@@ -349,13 +340,6 @@ int main(int argc, char** argv) {
 	}
 
 	cout << AQUA << endl;
-
-	// Display memory usage
-	cout << AQUA << "Memory Usage Before Serial Execution: " << RESET << std::fixed << serial_memory_usages_before << " MB" << endl;
-	cout << AQUA << "Memory Usage After Serial Execution: " << RESET << std::fixed << serial_memory_usages_after << " MB" << endl;
-	// Calculate memory usage difference for serial and parallel execution
-	double serial_memory_usage_diff = serial_memory_usages_after - serial_memory_usages_before;
-	cout << AQUA << "Memory Usage Difference for Serial Execution: " << RESET << std::fixed << serial_memory_usage_diff << " MB" << endl;
 
 	cout << "========================== END ========================" << endl;
 
